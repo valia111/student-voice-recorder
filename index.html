@@ -5,6 +5,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>تسجيل صوت الطالب</title>
+
 <style>
 body {
   font-family: Arial;
@@ -20,6 +21,16 @@ body {
   border-radius: 20px;
   box-shadow: 0 4px 20px #0001;
 }
+input {
+  width: 90%;
+  box-sizing: border-box;
+  padding: 13px;
+  margin: 12px 0;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  font-size: 16px;
+  text-align: right;
+}
 button {
   border: 0;
   border-radius: 12px;
@@ -28,30 +39,49 @@ button {
   font-size: 17px;
   cursor: pointer;
 }
+button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
 #start {background:#1769aa;color:white}
 #stop {background:#d93645;color:white}
-#status {margin:20px}
+#send {background:#16834a;color:white}
+#status {margin:20px;line-height:1.7}
 </style>
 </head>
+
 <body>
 <div class="card">
 <h2>تسجيل صوت الطالب</h2>
-<p>اضغط على الزر وسجل إجابتك الصوتية.</p>
+<p>اكتب اسمك، ثم سجّل إجابتك الصوتية.</p>
+
+<input id="student" type="text" placeholder="اسم الطالب">
+
 <button id="start">🎙️ بدء التسجيل</button>
 <button id="stop" disabled>إيقاف التسجيل</button>
+
 <p id="status">جاهز للتسجيل</p>
+
 <audio id="player" controls style="width:100%"></audio>
+
+<button id="send" disabled>إرسال التسجيل</button>
 </div>
 
 <script>
+const SCRIPT_URL =
+"https://script.google.com/macros/s/AKfycbykeYpvgDcXG4e72bhWfdvOCi4uKR-VqlbseHy_nasiVWWGr004_NakN3zjtxmXw2Kd/exec";
+
 let recorder;
 let stream;
 let chunks = [];
+let audioBlob = null;
 
 const start = document.getElementById("start");
 const stop = document.getElementById("stop");
+const send = document.getElementById("send");
 const status = document.getElementById("status");
 const player = document.getElementById("player");
+const student = document.getElementById("student");
 
 start.onclick = async () => {
   try {
@@ -69,18 +99,33 @@ start.onclick = async () => {
       "audio/mp4"
     ];
 
-    const mime = types.find(t => MediaRecorder.isTypeSupported(t));
-    recorder = new MediaRecorder(stream, mime ? {mimeType:mime} : {});
+    const mime = types.find(t =>
+      MediaRecorder.isTypeSupported(t)
+    );
+
+    recorder = new MediaRecorder(
+      stream,
+      mime ? {mimeType:mime} : {}
+    );
 
     chunks = [];
+    audioBlob = null;
+    send.disabled = true;
+
     recorder.ondataavailable = e => {
       if (e.data.size) chunks.push(e.data);
     };
 
     recorder.onstop = () => {
-      const blob = new Blob(chunks, {type:recorder.mimeType});
-      player.src = URL.createObjectURL(blob);
-      status.textContent = "تم التسجيل بنجاح. استمع إلى صوتك.";
+      audioBlob = new Blob(chunks, {
+        type: recorder.mimeType
+      });
+
+      player.src = URL.createObjectURL(audioBlob);
+      status.textContent =
+        "تم التسجيل. استمع إلى صوتك ثم أرسل التسجيل.";
+
+      send.disabled = false;
       stream.getTracks().forEach(t => t.stop());
     };
 
@@ -102,6 +147,60 @@ stop.onclick = () => {
     recorder.stop();
     start.disabled = false;
     stop.disabled = true;
+  }
+};
+
+send.onclick = async () => {
+  const name = student.value.trim();
+
+  if (!name) {
+    status.textContent = "يرجى كتابة اسم الطالب أولاً.";
+    student.focus();
+    return;
+  }
+
+  if (!audioBlob) {
+    status.textContent = "لا يوجد تسجيل لإرساله.";
+    return;
+  }
+
+  send.disabled = true;
+  status.textContent = "جاري إرسال التسجيل... يرجى الانتظار.";
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => {
+        resolve(reader.result.split(",")[1]);
+      };
+
+      reader.onerror = reject;
+      reader.readAsDataURL(audioBlob);
+    });
+
+    const payload = {
+      student: name,
+      mimeType: audioBlob.type || "audio/webm",
+      audio: base64
+    };
+
+    await fetch(SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: {
+        "Content-Type": "text/plain;charset=UTF-8"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    status.textContent =
+      "تم إرسال طلب التسجيل. يرجى الانتظار والتحقق من وصوله إلى مجلد التسجيلات.";
+
+  } catch (error) {
+    status.textContent =
+      "تعذر إرسال التسجيل. حاول مرة أخرى.";
+    send.disabled = false;
   }
 };
 </script>
