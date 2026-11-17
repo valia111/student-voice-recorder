@@ -1,110 +1,208 @@
 
-function getTeacherFiles() {
-  const props = PropertiesService.getUserProperties();
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تسجيل صوت الطالب</title>
 
-  let folderId = props.getProperty("TEACHER_FOLDER_ID");
-  let sheetId = props.getProperty("TEACHER_SHEET_ID");
-
-  let folder, spreadsheet;
-
-  if (folderId && sheetId) {
-    folder = DriveApp.getFolderById(folderId);
-    spreadsheet = SpreadsheetApp.openById(sheetId);
-  } else {
-    folder = DriveApp.createFolder("تسجيلات الطلاب الصوتية");
-    spreadsheet = SpreadsheetApp.create("سجل التسجيلات الصوتية");
-
-    props.setProperty("TEACHER_FOLDER_ID", folder.getId());
-    props.setProperty("TEACHER_SHEET_ID", spreadsheet.getId());
-
-    const sheet = spreadsheet.getSheets()[0];
-    sheet.setName("التسجيلات");
-    sheet.appendRow([
-      "اسم الطالب",
-      "التاريخ والوقت",
-      "رابط التسجيل"
-    ]);
-  }
-
-  return { folder, spreadsheet };
+<style>
+body {
+  font-family: Arial;
+  background: #f2f5fa;
+  text-align: center;
+  padding: 25px;
 }
+.card {
+  background: white;
+  max-width: 440px;
+  margin: 30px auto;
+  padding: 25px;
+  border-radius: 20px;
+  box-shadow: 0 4px 20px #0001;
+}
+input {
+  width: 90%;
+  box-sizing: border-box;
+  padding: 13px;
+  margin: 12px 0;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  font-size: 16px;
+  text-align: right;
+}
+button {
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 24px;
+  margin: 8px;
+  font-size: 17px;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+#start {background:#1769aa;color:white}
+#stop {background:#d93645;color:white}
+#send {background:#16834a;color:white}
+#status {margin:20px;line-height:1.7}
+</style>
+</head>
 
-// يفتحها المعلم مرة واحدة لتفعيل الصلاحيات وتجهيز ملفاته
-function doGet() {
+<body>
+<div class="card">
+<h2>تسجيل صوت الطالب</h2>
+<p>اكتب اسمك، ثم سجّل إجابتك الصوتية.</p>
+
+<input id="student" type="text" placeholder="اسم الطالب">
+
+<button id="start">🎙️ بدء التسجيل</button>
+<button id="stop" disabled>إيقاف التسجيل</button>
+
+<p id="status">جاهز للتسجيل</p>
+
+<audio id="player" controls style="width:100%"></audio>
+
+<button id="send" disabled>إرسال التسجيل</button>
+</div>
+
+<script>
+const SCRIPT_URL =
+"https://script.google.com/macros/s/AKfycbxK8pSzbwqb4in6gKms3p1_ERUBfxG3JdZLNffFfoyXsP5yaq8OluBlDZ9CxiFiJF_Qyw/exec";
+
+let recorder;
+let stream;
+let chunks = [];
+let audioBlob = null;
+
+const start = document.getElementById("start");
+const stop = document.getElementById("stop");
+const send = document.getElementById("send");
+const status = document.getElementById("status");
+const player = document.getElementById("player");
+const student = document.getElementById("student");
+
+start.onclick = async () => {
   try {
-    const files = getTeacherFiles();
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("MIC_UNAVAILABLE");
+    }
 
-    return HtmlService.createHtmlOutput(`
-      <div dir="rtl" style="font-family:Arial;text-align:center;padding:30px">
-        <h2>تم ربط حسابك بنجاح</h2>
-        <p>أصبح حسابك جاهزًا لاستقبال تسجيلات الطلاب.</p>
-        <p><a href="${files.folder.getUrl()}" target="_blank">فتح مجلد التسجيلات</a></p>
-        <p><a href="${files.spreadsheet.getUrl()}" target="_blank">فتح سجل التسجيلات</a></p>
-      </div>
-    `);
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true
+    });
+
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4"
+    ];
+
+    const mime = types.find(t =>
+      MediaRecorder.isTypeSupported(t)
+    );
+
+    recorder = new MediaRecorder(
+      stream,
+      mime ? {mimeType:mime} : {}
+    );
+
+    chunks = [];
+    audioBlob = null;
+    send.disabled = true;
+
+    recorder.ondataavailable = e => {
+      if (e.data.size) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      audioBlob = new Blob(chunks, {
+        type: recorder.mimeType
+      });
+
+      player.src = URL.createObjectURL(audioBlob);
+      status.textContent =
+        "تم التسجيل. استمع إلى صوتك ثم أرسل التسجيل.";
+
+      send.disabled = false;
+      stream.getTracks().forEach(t => t.stop());
+    };
+
+    recorder.start();
+    status.textContent = "جاري التسجيل...";
+    start.disabled = true;
+    stop.disabled = false;
+
   } catch (e) {
-    return HtmlService.createHtmlOutput(
-      "تعذر تجهيز الحساب. تأكد من تسجيل الدخول والموافقة على الصلاحيات."
-    );
+    status.textContent =
+      e.message === "MIC_UNAVAILABLE"
+      ? "المتصفح لا يدعم التسجيل في هذه الصفحة."
+      : "تعذر الوصول للميكروفون. افحص الأذونات.";
   }
-}
+};
 
-// استقبال التسجيل من موقع GitHub الحالي
-function doPost(e) {
+stop.onclick = () => {
+  if (recorder?.state === "recording") {
+    recorder.stop();
+    start.disabled = false;
+    stop.disabled = true;
+  }
+};
+
+send.onclick = async () => {
+  const name = student.value.trim();
+
+  if (!name) {
+    status.textContent = "يرجى كتابة اسم الطالب أولاً.";
+    student.focus();
+    return;
+  }
+
+  if (!audioBlob) {
+    status.textContent = "لا يوجد تسجيل لإرساله.";
+    return;
+  }
+
+  send.disabled = true;
+  status.textContent = "جاري إرسال التسجيل... يرجى الانتظار.";
+
   try {
-    const data = JSON.parse(e.postData.contents);
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
 
-    if (!data.student || !data.audio || !data.mimeType) {
-      throw new Error("بيانات التسجيل غير مكتملة.");
-    }
+      reader.onload = () => {
+        resolve(reader.result.split(",")[1]);
+      };
 
-    const files = getTeacherFiles();
-    const bytes = Utilities.base64Decode(data.audio);
+      reader.onerror = reject;
+      reader.readAsDataURL(audioBlob);
+    });
 
-    if (bytes.length > 10 * 1024 * 1024) {
-      throw new Error("حجم التسجيل أكبر من المسموح.");
-    }
+    const payload = {
+      student: name,
+      mimeType: audioBlob.type || "audio/webm",
+      audio: base64
+    };
 
-    const mime = data.mimeType;
-    const extension = mime.includes("mp4") ? "mp4" :
-                      mime.includes("ogg") ? "ogg" : "webm";
+    await fetch(SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: {
+        "Content-Type": "text/plain;charset=UTF-8"
+      },
+      body: JSON.stringify(payload)
+    });
 
-    const timestamp = Utilities.formatDate(
-      new Date(),
-      Session.getScriptTimeZone(),
-      "yyyy-MM-dd_HH-mm-ss"
-    );
-
-    const safeName = String(data.student)
-      .replace(/[\\/:*?"<>|]/g, "_");
-
-    const blob = Utilities.newBlob(
-      bytes,
-      mime,
-      safeName + "_" + timestamp + "." + extension
-    );
-
-    const file = files.folder.createFile(blob);
-
-    files.spreadsheet.getSheets()[0].appendRow([
-      data.student,
-      new Date(),
-      file.getUrl()
-    ]);
-
-    return ContentService
-      .createTextOutput(JSON.stringify({
-        success: true,
-        message: "تم حفظ التسجيل"
-      }))
-      .setMimeType(ContentService.MimeType.JSON);
+    status.textContent =
+      "تم إرسال طلب التسجيل. يرجى الانتظار والتحقق من وصوله إلى مجلد التسجيلات.";
 
   } catch (error) {
-    return ContentService
-      .createTextOutput(JSON.stringify({
-        success: false,
-        message: "تعذر حفظ التسجيل"
-      }))
-      .setMimeType(ContentService.MimeType.JSON);
+    status.textContent =
+      "تعذر إرسال التسجيل. حاول مرة أخرى.";
+    send.disabled = false;
   }
-}
+};
+</script>
+</body>
+</html>
